@@ -39,11 +39,13 @@ class QTimelineTag(QtGui.QGraphicsItemGroup, TimelineTag):
         self.line_item_pen = QtGui.QPen(self.rectangle_color)
         self.line_item_pen.setStyle(QtCore.Qt.DashLine)
         self.build()
+        self.setFlag(QtGui.QGraphicsItem.ItemIsMovable, True)
+        self.setFlag(QtGui.QGraphicsItem.ItemSendsScenePositionChanges, True)
 
     def build(self):
         polygon_width = 10 * len(self.label) # cbb
-        polygon_height = 30
-        polygon_arrow_height = 10
+        polygon_height = 20
+        polygon_arrow_height = 6
         ul = QtCore.QPointF(-polygon_width * 0.5, 0.0)
         ur = QtCore.QPointF(+polygon_width * 0.5, 0.0)
         lr = QtCore.QPointF(+polygon_width * 0.5, polygon_height)
@@ -55,6 +57,7 @@ class QTimelineTag(QtGui.QGraphicsItemGroup, TimelineTag):
         self.rectangle.setPen(self.rectangle_pen)
         self.rectangle.setBrush(self.rectangle_brush)
         self.label_text = QtGui.QGraphicsSimpleTextItem(self.label)
+        self.label_text.setPos(-len(self.label) * 10.0 / 4, 0.0)  # hack for now
         self.label_text.setPen(self.label_pen)
         self.label_text.setBrush(self.label_brush)
         self.line_item = QtGui.QGraphicsLineItem(QtCore.QLineF(arrow, line_point))
@@ -66,6 +69,13 @@ class QTimelineTag(QtGui.QGraphicsItemGroup, TimelineTag):
         self.rectangle.paint(*args)
         self.label_text.paint(*args)
         self.line_item.paint(*args)
+
+    def itemChange(self, change, variant):
+        value = variant.toPyObject()
+        print change, value, QtGui.QGraphicsItem.ItemPositionChange
+        if change == QtGui.QGraphicsItem.ItemPositionChange:
+            value.setY(40.0)
+        return QtGui.QGraphicsItemGroup.itemChange(self, change, value)
 
 
 ##########################################
@@ -85,13 +95,14 @@ class FrameTimeline(QtGui.QGraphicsScene):
     def __init__(self, parent=None):
         super(FrameTimeline, self).__init__(parent)
         self.frame_bar_height = 30
-        self.tag_bar_height = 30
+        self.tag_bar_height = 40
         #
         self.start_frame = 1
         self.end_frame = 100
         self.frame_number_stride = 10
         self.current_frame = None
         #
+        self.initial_screen_units_per_frame = 5
         self.screen_units_per_frame = 5
         #
         self.setBackgroundBrush(QtCore.Qt.lightGray)
@@ -171,11 +182,19 @@ class FrameTimeline(QtGui.QGraphicsScene):
             self.addItem(tag_item)
             self._tag_bar_text_items.append(tag_item)
 
-    def update_positions(self):
+    def frame_under_mouse(self, x, y):
+        local_point = self._frame_bar_rect_item.mapFromScene(x, y)
+        frame = int(local_point.x())
+        return frame
+
+    def update_positions(self, center_on=None):
         # Transform that allows horizontal scaling of the timeline (screen_units_per_frame factor)
-        timeline_scale_transform = self._frame_bar_rect_item.transform()
-        timeline_scale_transform.reset()
-        timeline_scale_transform.scale(self.screen_units_per_frame, 1.0)
+        timeline_scale_transform = QtGui.QTransform().scale(float(self.screen_units_per_frame), 1.0)
+        if center_on is None:
+            center_on = self.start_frame
+        x_offset = -(center_on - self.start_frame) * (self.screen_units_per_frame - self.initial_screen_units_per_frame)
+        x_offset /= self.screen_units_per_frame
+        timeline_scale_transform.translate(x_offset, 1.0)
 
         #
         #  Frame bar 
@@ -187,7 +206,7 @@ class FrameTimeline(QtGui.QGraphicsScene):
         # Text
         for i, t in enumerate(range(self.start_frame, self.end_frame, self.frame_number_stride)):
             text = self._frame_bar_text_items[i]
-            text.setPos(t * self.screen_units_per_frame, 0)
+            text.setPos(t * self.screen_units_per_frame + x_offset, 0)
         
         #
         #  Tag bar
@@ -198,7 +217,7 @@ class FrameTimeline(QtGui.QGraphicsScene):
 
         # Polygon, Text
         for tag, tag_item in zip(self.tags, self._tag_bar_text_items):
-            tag_item.setPos(tag.frame * self.screen_units_per_frame, self.frame_bar_height + 2)
+            tag_item.setPos(tag.frame * self.screen_units_per_frame + x_offset, self.frame_bar_height + 8)
 
 
 ##########################################
@@ -208,7 +227,7 @@ if __name__ == '__main__':
 
     app = QtGui.QApplication(sys.argv)
     g = FrameTimeline()
-    g.add_tag("test", 13)
+    g.add_tag("testing", 23)
     g.build()
 
     class DemoView(QtGui.QGraphicsView):
@@ -221,7 +240,8 @@ if __name__ == '__main__':
             delta = float(event.delta()) / 120.0
             g.screen_units_per_frame += delta
             g.screen_units_per_frame = max(1, g.screen_units_per_frame)
-            g.update_positions()
+            frm = g.frame_under_mouse(event.x(), event.y())
+            g.update_positions(center_on=frm)
 
             # l = QtGui.QGraphicsAnchorLayout()
             # l.setSpacing(0)
